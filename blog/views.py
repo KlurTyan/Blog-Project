@@ -4,6 +4,9 @@ from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.views.generic import ListView
 from django.core.mail import send_mail
 from django.views.decorators.http import require_POST
+from django.db.models import Count
+
+from taggit.models import Tag
 
 from .models import Post, Comment
 from .forms import EmailPostForm, CommentForm
@@ -68,8 +71,13 @@ def post_share(request, post_id):
     )
 
 
-def post_list(request):
+def post_list(request, tag_slug=None):
     post_list = Post.published.all()
+    tag = None
+    if tag_slug:
+        tag = get_object_or_404(Tag, slug=tag_slug)
+        post_list = post_list.filter(tags__in=[tag])
+
     # Постраничная разбивка с 3 постами на страницу
     paginator = Paginator(post_list, 3)
     page_number = request.GET.get("page", 1)
@@ -81,7 +89,7 @@ def post_list(request):
     except EmptyPage:
         # Если page_number находится вне диапазона, то выдать последнюю страницу
         posts = paginator.page(paginator.num_pages)
-    return render(request, "blog/post/list.html", {"posts": posts})
+    return render(request, "blog/post/list.html", {"posts": posts, "tag": tag})
 
 
 def post_detail(request, year, month, day, post):
@@ -105,8 +113,20 @@ def post_detail(request, year, month, day, post):
         active=True
     )  # Форма для комментирования пользователями
     form = CommentForm()
+
+    # Список схожих постов
+    post_tags_ids = post.tags.values_list("id", flat=True)
+    similar_posts = Post.published.filter(tags__in=post_tags_ids).exclude(id=post.id)
+    similar_posts = similar_posts.annotate(same_tags=Count("tags")).order_by(
+        "-same_tags", "-publish"
+    )[:4]
     return render(
         request,
         "blog/post/detail.html",
-        {"post": post, "comments": comments, "form": form},
+        {
+            "post": post,
+            "comments": comments,
+            "form": form,
+            "similar_posts": similar_posts,
+        },
     )
